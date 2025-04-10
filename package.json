@@ -1,5 +1,5 @@
 {
-  "name": "port-3000",
+  "name": "wimb-showroom",
   "version": "0.1.0",
   "private": true,
   "homepage": "https://dev-notegg.github.io/wimb-showroom/",
@@ -20,6 +20,7 @@
     "react-color": "^2.19.3",
     "react-dom": "^19.0.0",
     "react-konva": "^19.0.3",
+    "styled-components": "^6.1.17",
     "use-image": "^1.1.1"
   },
   "devDependencies": {
