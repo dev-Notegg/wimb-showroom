@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 
 export default function Home() {
-  const NoSSRComponent = dynamic(() => import("../app/save/SavePoint2"), {
+  const NoSSRComponent = dynamic(() => import("../app/ui/ui"), {
     ssr: false,
   });
 
