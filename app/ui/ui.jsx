@@ -279,7 +279,7 @@ const App = () => {
             title="배경색 선택"
           >
             <NextImage
-              src={"/images/color-picker-icon.png"}
+              src={"./images/color-picker-icon.png"}
               width={25}
               height={25}
               alt="background-color-picker-icon"
@@ -293,7 +293,7 @@ const App = () => {
               onChange={fileInputOnChange}
             />
             <NextImage
-              src={"/images/image-square.png"}
+              src={"./images/image-square.png"}
               width={25}
               height={25}
               alt="import-image-icon"
@@ -307,7 +307,7 @@ const App = () => {
               onChange={fileInputOnChange}
             />
             <NextImage
-              src={"/images/plus.png"}
+              src={"./images/plus.png"}
               width={25}
               height={25}
               alt="plus-icon"
@@ -316,7 +316,7 @@ const App = () => {
 
           <button onClick={undo} title="되돌리기 (Ctrl+Z)">
             <NextImage
-              src={"/images/arrow-u-down-undo.png"}
+              src={"./images/arrow-u-down-undo.png"}
               width={25}
               height={25}
               alt="undo-icon"
@@ -324,7 +324,7 @@ const App = () => {
           </button>
           <button onClick={redo} title="다시 실행 (Ctrl+Y)">
             <NextImage
-              src={"/images/arrow-u-down-redo.png"}
+              src={"./images/arrow-u-down-redo.png"}
               width={25}
               height={25}
               alt="redo-icon"
