@@ -33,10 +33,23 @@ const ImageRectangle = ({
   onDragMove,
   onDragEnd,
   undoRedoState,
+  isSelected,
 }) => {
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
+  const trRef = useRef();
+
+  useEffect(() => {
+    if (isSelected) {
+      // we need to attach transformer manually
+      trRef.current.nodes([shapeRef.current]);
+    }
+    if (isSelected && trRef.current && shapeRef.current) {
+      trRef.current.nodes([shapeRef.current]);
+      trRef.current.getLayer().batchDraw();
+    }
+  }, [isSelected]);
 
   const [style, api] = useSpring(() => ({
     width: shapeProps.width,
@@ -120,6 +133,19 @@ const ImageRectangle = ({
         onTap={onSelect}
         {...style}
       />
+      {isSelected && (
+        <Transformer
+          ref={trRef}
+          flipEnabled={false}
+          boundBoxFunc={(oldBox, newBox) => {
+            // limit resize
+            if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
+              return oldBox;
+            }
+            return newBox;
+          }}
+        />
+      )}
     </>
   );
 };
@@ -253,6 +279,47 @@ const App = () => {
     setRedoStack((prevList) => prevList.slice(0, -1));
     setUndoRedoState((state) => state + 1);
     setCropMode(false); // 크롭 모드 종료
+  };
+
+  //이미지 저장
+  const handleExport = () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // 현재 보이는 모든 Transformer 잠시 숨기기
+    const transformers = stage.find("Transformer");
+    transformers.forEach((tr) => tr.hide());
+    stage.draw(); // 즉시 리렌더링
+
+    // 이미지(Transformer 제외)만 DataURL로 추출
+    const uri = stage.toDataURL({ pixelRatio: 2 });
+
+    // 파일로 저장
+    const link = document.createElement("a");
+    link.download = "canvas-export.png";
+    link.href = uri;
+    link.click();
+
+    // Transformer 다시 보이게
+    transformers.forEach((tr) => tr.show());
+    stage.draw();
+  };
+
+  // 앞으로가기 뒤로가기
+  const bringToFront = () => {
+    const idx = images.findIndex((img) => img.id === selectedId);
+    if (idx === -1 || idx === images.length - 1) return; // 이미 최상위
+    const newImages = [...images];
+    [newImages[idx], newImages[idx + 1]] = [newImages[idx + 1], newImages[idx]]; // swap
+    applyHistory(newImages);
+  };
+
+  const sendToBack = () => {
+    const idx = images.findIndex((img) => img.id === selectedId);
+    if (idx <= 0) return; // 이미 최하위
+    const newImages = [...images];
+    [newImages[idx - 1], newImages[idx]] = [newImages[idx], newImages[idx - 1]]; // swap
+    applyHistory(newImages);
   };
 
   useEffect(() => {
@@ -536,6 +603,7 @@ const App = () => {
                 src={image.url}
                 shapeProps={image}
                 undoRedoState={undoRedoState}
+                isSelected={image.id === selectedId}
                 onSelect={() => {
                   selectShape(image.id);
                 }}
@@ -576,6 +644,7 @@ const App = () => {
             return null;
           })}
         </Layer>
+
         {cropMode && cropRect && (
           <Layer>
             <Rect
@@ -610,7 +679,7 @@ const App = () => {
               }}
               ref={cropRectRef}
             />
-            <Transformer ref={cropTransformerRef} />{" "}
+            <Transformer ref={cropTransformerRef} />
           </Layer>
         )}
       </Stage>
@@ -679,11 +748,46 @@ const App = () => {
               alt="redo-icon"
             />
           </button>
+
+          <button onClick={handleExport} title="이미지 저장">
+            <NextImage
+              src={"./images/save.png"}
+              width={25}
+              height={25}
+              alt="redo-icon"
+            />
+          </button>
+
+          {selectedId && (
+            <>
+              <button title="인덱스 하나 앞으로 이동" onClick={bringToFront}>
+                <NextImage
+                  src={"./images/foward.png"}
+                  width={25}
+                  height={25}
+                  alt="redo-icon"
+                />
+              </button>
+              <button
+                title="인덱스 하나 뒤로 이동"
+                onClick={sendToBack}
+                style={{ marginLeft: 10 }}
+              >
+                <NextImage
+                  src={"./images/backward.png"}
+                  width={25}
+                  height={25}
+                  alt="redo-icon"
+                />
+              </button>
+            </>
+          )}
           {!cropMode && selectedId && (
             <button onClick={startCropMode} title="크롭 모드">
               Crop
             </button>
           )}
+
           {cropMode && (
             <>
               <button onClick={handleConfirmCrop} title="크롭 적용">
