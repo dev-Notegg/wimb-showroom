@@ -38,26 +38,14 @@ const ImageRectangle = ({
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
-  const trRef = useRef();
-
-  useEffect(() => {
-    if (isSelected) {
-      // we need to attach transformer manually
-      trRef.current.nodes([shapeRef.current]);
-    }
-    if (isSelected && trRef.current && shapeRef.current) {
-      trRef.current.nodes([shapeRef.current]);
-      trRef.current.getLayer().batchDraw();
-    }
-  }, [isSelected]);
 
   const [style, api] = useSpring(() => ({
     width: shapeProps.width,
     height: shapeProps.height,
     x: shapeProps.width / 2,
     y: shapeProps.height / 2,
-    offsetX: shapeProps.width / 2,
-    offsetY: shapeProps.height / 2,
+    // offsetX: shapeProps.width / 2,
+    // offsetY: shapeProps.height / 2,
   }));
 
   useGesture(
@@ -133,19 +121,6 @@ const ImageRectangle = ({
         onTap={onSelect}
         {...style}
       />
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          flipEnabled={false}
-          boundBoxFunc={(oldBox, newBox) => {
-            // limit resize
-            if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
     </>
   );
 };
@@ -226,10 +201,18 @@ const App = () => {
         y: stageRef.current.height() / 4,
         width: fitW,
         height: fitH,
-        offsetX: stageRef.current.width() / 2,
-        offsetY: stageRef.current.height() / 2,
+        // offsetX: stageRef.current.width() / 2,
+        // offsetY: stageRef.current.height() / 2,
         scale: { x: 1, y: 1 },
         rotation: 0,
+        origWidth: img.naturalWidth,
+        origHeight: img.naturalHeight,
+        crop: {
+          x: 0,
+          y: 0,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        },
       };
 
       const updatedImages = [...images, newImage];
@@ -312,6 +295,7 @@ const App = () => {
     const newImages = [...images];
     [newImages[idx], newImages[idx + 1]] = [newImages[idx + 1], newImages[idx]]; // swap
     applyHistory(newImages);
+    setUndoRedoState((state) => state + 1);
   };
 
   const sendToBack = () => {
@@ -320,6 +304,7 @@ const App = () => {
     const newImages = [...images];
     [newImages[idx - 1], newImages[idx]] = [newImages[idx], newImages[idx - 1]]; // swap
     applyHistory(newImages);
+    setUndoRedoState((state) => state + 1);
   };
 
   useEffect(() => {
@@ -572,6 +557,7 @@ const App = () => {
     setCropMode(false);
     setCropRect(null);
     selectShape(null);
+    setUndoRedoState((state) => state + 1);
   };
 
   const handleCancelCrop = () => {
