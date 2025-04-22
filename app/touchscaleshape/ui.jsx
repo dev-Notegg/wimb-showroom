@@ -1,38 +1,29 @@
 // 1. 배경색 변경
 // 2. 로컬 이미지 불러오기
 // 3. transform 테두리
-// 4. undo, redo 기능
-// 5. 가이드라인 기능
-// 6. 이미지 앞으로 보내는 기능
 
 import { useState, useRef, useEffect } from "react";
-import { Stage, Layer, Image, Transformer, Line } from "react-konva";
+import { Stage, Layer, Image, Transformer, Rect } from "react-konva";
 
 import { SketchPicker } from "react-color";
 import useImage from "use-image";
 
 import NextImage from "next/image";
 import styled from "styled-components";
+import css from "styled-jsx/css";
+
+import { RectNode } from "../test2/AppKonva";
+
+import { useGesture } from "@use-gesture/react";
+import { animated, useSpring } from "@react-spring/konva";
 
 const width = window.innerWidth;
 const height = window.innerHeight;
 
+window.Konva.hitOnDragEnabled = true;
+window.Konva.captureTouchEventsEnabled = true;
+
 const deepClone = (arr) => arr.map((item) => ({ ...item }));
-
-const buttonStyle = {
-  padding: "8px 16px",
-  fontSize: "14px",
-  backgroundColor: "#f0f0f0",
-  border: "1px solid #ccc",
-  borderRadius: "4px",
-  marginRight: "8px",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-};
-
-const GUIDELINE_OFFSET = 5;
 
 const ImageRectangle = ({
   src,
@@ -40,45 +31,69 @@ const ImageRectangle = ({
   isSelected,
   onSelect,
   onChange,
-  onDragMove,
-  onDragEnd,
 }) => {
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
   const trRef = useRef();
 
-  useEffect(() => {
-    if (isSelected) {
-      // we need to attach transformer manually
-      trRef.current.nodes([shapeRef.current]);
+  console.log("shpeProps", shapeProps);
+
+  const [style, api] = useSpring(() => ({
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    scale: { x: 1, y: 1 },
+    rotation: 0,
+    offsetX: 50,
+    offsetY: 50,
+  }));
+
+  const ref = useRef(null);
+
+  useGesture(
+    {
+      onDrag: (options) => {
+        api.start({ x: options.offset[0], y: options.offset[1] });
+      },
+      onPinch: (options) => {
+        api.start({
+          scale: { x: options.offset[0], y: options.offset[0] },
+          rotation: options.offset[1],
+        });
+      },
+    },
+    {
+      drag: {
+        pointer: { capture: false, touch: true },
+      },
+      pinch: {
+        pointer: { touch: true, capture: false },
+        // scaleBounds: { min: 0.5, max: 2 },
+        rubberband: true,
+      },
+      target: ref,
     }
-  }, [isSelected]);
+  );
 
   return (
     <>
-      <Image
-        name="object" // 가이드라인 기능에서 사용하기 위한 객체명 설정
+      <animated.Image
         image={image}
-        onClick={onSelect}
-        onTap={onSelect}
-        ref={shapeRef}
-        {...shapeProps}
-        draggable={isSelected}
-        onDragMove={(e) => {
-          if (onDragMove) {
-            onDragMove(e, shapeRef.current);
-          }
-        }}
+        // onClick={onSelect}
+        // onTap={onSelect}
+        ref={ref}
+        {...style}
+        width={shapeProps.width}
+        height={shapeProps.height}
+        // {...shapeProps}
         onDragEnd={(e) => {
           onChange({
             ...shapeProps,
             x: e.target.x(),
             y: e.target.y(),
           });
-          if (onDragEnd) {
-            onDragEnd(e);
-          }
         }}
         onTransformEnd={(e) => {
           // transformer is changing scale of the node
@@ -101,29 +116,14 @@ const ImageRectangle = ({
             height: Math.max(node.height() * scaleY),
             rotation: node.rotation(),
           });
-          if (onDragEnd) onDragEnd(e);
         }}
       />
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          flipEnabled={false}
-          boundBoxFunc={(oldBox, newBox) => {
-            // limit resize
-            if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
     </>
   );
 };
 
 const App = () => {
   const stageRef = useRef(null);
-  const imagesLayerRef = useRef(null); // 레이어 ref
 
   const [images, setImages] = useState([]);
   const [selectedId, selectShape] = useState(null);
@@ -133,9 +133,6 @@ const App = () => {
 
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-
-  // 가이드라인 상태 추가
-  const [guidelines, setGuidelines] = useState([]);
 
   const applyHistory = (nextImages, nextColor = color) => {
     setImages(nextImages);
@@ -153,7 +150,7 @@ const App = () => {
   const handleChangeComplete = (color) => {
     const container = stageRef.current.container();
     container.style.backgroundColor = color.hex;
-    applyHistory(images, color.hex);
+    applyHistory(images, color.hex); // ✅ 제대로 동작
   };
 
   // 로컬 이미지 파일 추가
@@ -189,7 +186,7 @@ const App = () => {
         y: stageRef.current.height() / 4,
         width: fitW,
         height: fitH,
-        rotation: 0,
+        // rotation: 0,
       };
 
       const updatedImages = [...images, newImage];
@@ -269,153 +266,6 @@ const App = () => {
     }
   }, [color]);
 
-  // 가이드라인 관련 헬퍼 함수들
-  const getLineGuideStops = (skipShape) => {
-    const stage = stageRef.current;
-    const vertical = [0, stage.width() / 2, stage.width()];
-    const horizontal = [0, stage.height() / 2, stage.height()];
-
-    stage.find(".object").forEach((guideItem) => {
-      if (guideItem === skipShape) return;
-
-      const box = guideItem.getClientRect({ skipStroke: true });
-      vertical.push(box.x, box.x + box.width, box.x + box.width / 2);
-      horizontal.push(box.y, box.y + box.height, box.y + box.height / 2);
-    });
-
-    return { vertical, horizontal };
-  };
-
-  const getObjectSnappingEdges = (node) => {
-    const box = node.getClientRect({ skipStroke: true });
-    const absPos = node.absolutePosition();
-
-    return {
-      vertical: [
-        {
-          guide: box.x,
-          offset: absPos.x - box.x,
-          snap: "start",
-        },
-        {
-          guide: box.x + box.width / 2,
-          offset: absPos.x - (box.x + box.width / 2),
-          snap: "center",
-        },
-        {
-          guide: box.x + box.width,
-          offset: absPos.x - (box.x + box.width),
-          snap: "end",
-        },
-      ],
-      horizontal: [
-        {
-          guide: box.y,
-          offset: absPos.y - box.y,
-          snap: "start",
-        },
-        {
-          guide: box.y + box.height / 2,
-          offset: absPos.y - (box.y + box.height / 2),
-          snap: "center",
-        },
-        {
-          guide: box.y + box.height,
-          offset: absPos.y - (box.y + box.height),
-          snap: "end",
-        },
-      ],
-    };
-  };
-
-  const getGuides = (lineGuideStops, itemBounds) => {
-    let resultV = [];
-    let resultH = [];
-
-    lineGuideStops.vertical.forEach((lineGuide) => {
-      itemBounds.vertical.forEach((itemBound) => {
-        const diff = Math.abs(lineGuide - itemBound.guide);
-        // if the distance between guild line and object snap point is close we can consider this for snapping
-        if (diff < GUIDELINE_OFFSET) {
-          resultV.push({
-            lineGuide: lineGuide,
-            diff: diff,
-            snap: itemBound.snap,
-            offset: itemBound.offset,
-          });
-        }
-      });
-    });
-
-    lineGuideStops.horizontal.forEach((lineGuide) => {
-      itemBounds.horizontal.forEach((itemBound) => {
-        const diff = Math.abs(lineGuide - itemBound.guide);
-        if (diff < GUIDELINE_OFFSET) {
-          resultH.push({
-            lineGuide: lineGuide,
-            diff: diff,
-            snap: itemBound.snap,
-            offset: itemBound.offset,
-          });
-        }
-      });
-    });
-
-    const guides = [];
-
-    const minV = resultV.sort((a, b) => a.diff - b.diff)[0];
-    const minH = resultH.sort((a, b) => a.diff - b.diff)[0];
-    if (minV) {
-      guides.push({
-        lineGuide: minV.lineGuide,
-        offset: minV.offset,
-        orientation: "V",
-        snap: minV.snap,
-      });
-    }
-    if (minH) {
-      guides.push({
-        lineGuide: minH.lineGuide,
-        offset: minH.offset,
-        orientation: "H",
-        snap: minH.snap,
-      });
-    }
-    return guides;
-  };
-
-  // 가이드라인 스냅 기능을 위한 드래그 무브 핸들러
-  const handleDragMove = (e, node) => {
-    // 기존 가이드라인 라인 제거 (state 초기화)
-    setGuidelines([]);
-    const lineGuideStops = getLineGuideStops(node);
-    const itemBounds = getObjectSnappingEdges(node);
-    const guides = getGuides(lineGuideStops, itemBounds);
-
-    if (guides.length) {
-      let absPos = node.absolutePosition();
-      guides.forEach((lg) => {
-        switch (lg.orientation) {
-          case "V": {
-            absPos.x = lg.lineGuide + lg.offset;
-            break;
-          }
-          case "H": {
-            absPos.y = lg.lineGuide + lg.offset;
-            break;
-          }
-        }
-      });
-      node.absolutePosition(absPos);
-    }
-    setGuidelines(guides);
-  };
-
-  // 드래그 종료 시 가이드라인 클리어
-  const handleDragEnd = () => {
-    setGuidelines([]);
-  };
-
   return (
     <>
       <Stage
@@ -425,7 +275,15 @@ const App = () => {
         onMouseDown={checkDeselect}
         onTouchStart={checkDeselect}
       >
-        <Layer ref={imagesLayerRef}>
+        <Layer>
+          {/* <animated.Rect
+            ref={ref}
+            {...style}
+            fill="yellow"
+            width={200}
+            height={200}
+          /> */}
+          <RectNode />
           {images.map((image, i) => {
             return (
               <ImageRectangle
@@ -440,37 +298,10 @@ const App = () => {
                   const rects = images.slice();
                   rects[i] = newAttrs;
                   applyHistory(rects);
+                  console.log("rects", rects);
                 }}
-                onDragMove={handleDragMove}
-                onDragEnd={handleDragEnd}
               />
             );
-          })}
-        </Layer>
-        <Layer>
-          {guidelines.map((guide, index) => {
-            if (guide.orientation === "H") {
-              return (
-                <Line
-                  key={index}
-                  points={[-6000, guide.lineGuide, 6000, guide.lineGuide]}
-                  stroke="rgb(0, 161, 255)"
-                  strokeWidth={1}
-                  dash={[4, 6]}
-                />
-              );
-            } else if (guide.orientation === "V") {
-              return (
-                <Line
-                  key={index}
-                  points={[guide.lineGuide, -6000, guide.lineGuide, 6000]}
-                  stroke="rgb(0, 161, 255)"
-                  strokeWidth={1}
-                  dash={[4, 6]}
-                />
-              );
-            }
-            return null;
           })}
         </Layer>
       </Stage>
@@ -539,27 +370,6 @@ const App = () => {
               alt="redo-icon"
             />
           </button>
-          {/* <button
-            onClick={() => {
-              if (!selectedId) return;
-              const index = images.findIndex((img) => img.id === selectedId);
-              if (index === -1) return;
-
-              const newImages = [...images];
-              const [selected] = newImages.splice(index, 1);
-              newImages.push(selected);
-              setImages(newImages);
-              applyHistory(newImages);
-            }}
-            title="이미지 앞으로 보내기"
-          >
-            <NextImage
-              src={"./images/layer-forward.png"}
-              width={25}
-              height={25}
-              alt="bring-forward-icon"
-            />
-          </button> */}
         </ToolBarContainer>
       </div>
     </>
@@ -581,11 +391,6 @@ const ToolBarContainer = styled.div`
   padding: 14px 31px;
   border-radius: 80px;
   background-color: rgba(0, 0, 0, 0.5);
-
-  img {
-    width: 25px;
-    height: 25px;
-  }
 `;
 
 const InputFile = styled.input`

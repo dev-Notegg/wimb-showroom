@@ -4,9 +4,10 @@
 // 4. undo, redo 기능
 // 5. 가이드라인 기능
 // 6. 이미지 앞으로 보내는 기능
+// 7. 핀치 제스처 추가
 
 import { useState, useRef, useEffect } from "react";
-import { Stage, Layer, Image, Transformer, Line } from "react-konva";
+import { Layer, Transformer, Line } from "react-konva";
 
 import { SketchPicker } from "react-color";
 import useImage from "use-image";
@@ -14,128 +15,132 @@ import useImage from "use-image";
 import NextImage from "next/image";
 import styled from "styled-components";
 
-const width = window.innerWidth;
-const height = window.innerHeight;
+import { useGesture } from "@use-gesture/react";
+import { animated, useSpring } from "@react-spring/konva";
+import { InputFile, InputFileLabel, ToolBarContainer } from "../style";
+import { Stage } from "./Stage";
+import useStageStore from "@/store/useStageStore";
+import { Image } from "./Image";
+import useStore from "@/store/useStore";
 
 const deepClone = (arr) => arr.map((item) => ({ ...item }));
-
-const buttonStyle = {
-  padding: "8px 16px",
-  fontSize: "14px",
-  backgroundColor: "#f0f0f0",
-  border: "1px solid #ccc",
-  borderRadius: "4px",
-  marginRight: "8px",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-};
 
 const GUIDELINE_OFFSET = 5;
 
 const ImageRectangle = ({
   src,
   shapeProps,
-  isSelected,
-  onSelect,
   onChange,
   onDragMove,
   onDragEnd,
+  undoRedoState,
 }) => {
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
-  const trRef = useRef();
+
+  const [style, api] = useSpring(() => ({
+    width: shapeProps.width,
+    height: shapeProps.height,
+    x: shapeProps.width / 2,
+    y: shapeProps.height / 2,
+    offsetX: shapeProps.width / 2,
+    offsetY: shapeProps.height / 2,
+  }));
+
+  useGesture(
+    {
+      onDrag: ({ pinching, cancel, offset: [x, y] }) => {
+        if (pinching) return cancel();
+        api.start({
+          x,
+          y,
+          immediate: true,
+        });
+        onDragMove("", shapeRef.current);
+      },
+      onPinch: ({ offset: [s, a] }) => {
+        api.start({
+          scale: { x: s, y: s },
+          rotation: a,
+        });
+      },
+      onPinchEnd: ({ offset: [s, a] }) => {
+        onChange({
+          ...shapeProps,
+          scale: { x: s, y: s },
+          rotation: a,
+        });
+      },
+      onDragEnd: ({ offset: [x, y] }) => {
+        onChange({
+          ...shapeProps,
+          x: style.x.get(),
+          y: style.y.get(),
+        });
+        if (onDragEnd) {
+          onDragEnd();
+        }
+      },
+    },
+    {
+      drag: {
+        pointer: { capture: false, touch: true },
+        from: () => [style.x.get(), style.y.get()],
+      },
+      pinch: {
+        pointer: { touch: true, capture: false },
+      },
+      target: shapeRef,
+    }
+  );
 
   useEffect(() => {
-    if (isSelected) {
-      // we need to attach transformer manually
-      trRef.current.nodes([shapeRef.current]);
+    if (undoRedoState && shapeProps) {
+      api.start({
+        width: shapeProps.width,
+        height: shapeProps.height,
+        x: shapeProps.x,
+        y: shapeProps.y,
+        offsetX: shapeProps.offsetX,
+        offsetY: shapeProps.offsetY,
+        scale: shapeProps.scale,
+        rotation: shapeProps.rotation,
+        immediate: true,
+      });
     }
-  }, [isSelected]);
+  }, [undoRedoState]);
 
   return (
     <>
-      <Image
+      <animated.Image
         name="object" // 가이드라인 기능에서 사용하기 위한 객체명 설정
         image={image}
-        onClick={onSelect}
-        onTap={onSelect}
         ref={shapeRef}
-        {...shapeProps}
-        draggable={isSelected}
-        onDragMove={(e) => {
-          if (onDragMove) {
-            onDragMove(e, shapeRef.current);
-          }
-        }}
-        onDragEnd={(e) => {
-          onChange({
-            ...shapeProps,
-            x: e.target.x(),
-            y: e.target.y(),
-          });
-          if (onDragEnd) {
-            onDragEnd(e);
-          }
-        }}
-        onTransformEnd={(e) => {
-          // transformer is changing scale of the node
-          // and NOT its width or height
-          // but in the store we have only width and height
-          // to match the data better we will reset scale on transform end
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-
-          // we will reset it back
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...shapeProps,
-            x: node.x(),
-            y: node.y(),
-            // set minimal value
-            width: Math.max(5, node.width() * scaleX),
-            height: Math.max(node.height() * scaleY),
-            rotation: node.rotation(),
-          });
-          if (onDragEnd) onDragEnd(e);
-        }}
+        {...style}
       />
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          flipEnabled={false}
-          boundBoxFunc={(oldBox, newBox) => {
-            // limit resize
-            if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
     </>
   );
 };
 
 const App = () => {
   const stageRef = useRef(null);
-  const imagesLayerRef = useRef(null); // 레이어 ref
 
-  const [images, setImages] = useState([]);
   const [selectedId, selectShape] = useState(null);
 
-  const [color, setColor] = useState("#fff");
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
 
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
 
+  const [undoRedoState, setUndoRedoState] = useState(0);
+
   // 가이드라인 상태 추가
   const [guidelines, setGuidelines] = useState([]);
+
+  const { color, setColor } = useStageStore();
+
+  const { fileInputOnChange, undo, redo } = useStore();
 
   const applyHistory = (nextImages, nextColor = color) => {
     setImages(nextImages);
@@ -156,48 +161,6 @@ const App = () => {
     applyHistory(images, color.hex);
   };
 
-  // 로컬 이미지 파일 추가
-  const fileInputOnChange = async (e) => {
-    if (!e.target.files[0]) return;
-
-    const URL = window.webkitURL || window.URL;
-    const url = URL.createObjectURL(e.target.files[0]);
-    const img = new window.Image();
-    img.src = url;
-
-    img.onload = () => {
-      const { width, height } = img;
-
-      // get the aperture we need to fit by taking padding off the stage size.
-      var targetW = stageRef.current.getWidth() - 2;
-      var targetH = stageRef.current.getHeight() - 2;
-
-      // compute the ratios of image dimensions to aperture dimensions
-      var widthFit = targetW / width;
-      var heightFit = targetH / height;
-
-      // compute a scale for best fit and apply it
-      var scale = widthFit > heightFit ? heightFit : widthFit;
-
-      var fitW = parseInt(width * scale, 10);
-      var fitH = parseInt(height * scale, 10);
-
-      const newImage = {
-        url: url,
-        id: Math.floor(Math.random() * 9999) + 1,
-        x: stageRef.current.width() / 4,
-        y: stageRef.current.height() / 4,
-        width: fitW,
-        height: fitH,
-        rotation: 0,
-      };
-
-      const updatedImages = [...images, newImage];
-      setImages(updatedImages);
-      applyHistory(updatedImages);
-    };
-  };
-
   // transformer 터치이벤트 받기
 
   const checkDeselect = (e) => {
@@ -207,34 +170,6 @@ const App = () => {
       selectShape(null);
       setColorPickerOpen(false);
     }
-  };
-
-  const undo = () => {
-    if (history.length <= 1) return; // 더 이상 되돌릴 게 없음
-
-    const prev = history[history.length - 2]; // 되돌릴 상태
-    const current = history[history.length - 1]; // 현재 상태
-
-    setImages(prev.images);
-    setColor(prev.color);
-
-    setHistory((prevList) => prevList.slice(0, -1)); // 마지막 하나 제거
-    setRedoStack((prevList) => [...prevList, current]); // 현재 상태를 redo에 추가
-    selectShape(null);
-  };
-
-  const redo = () => {
-    if (redoStack.length === 0) return;
-
-    const next = redoStack[redoStack.length - 1];
-
-    // Redo 상태 적용
-    setImages(next.images);
-    setColor(next.color);
-
-    // history에 추가하고, redoStack에서 제거
-    setHistory((prevList) => [...prevList, next]);
-    setRedoStack((prevList) => prevList.slice(0, -1));
   };
 
   useEffect(() => {
@@ -261,13 +196,6 @@ const App = () => {
       ]);
     }
   }, []);
-
-  useEffect(() => {
-    const container = stageRef.current?.container();
-    if (container) {
-      container.style.backgroundColor = color;
-    }
-  }, [color]);
 
   // 가이드라인 관련 헬퍼 함수들
   const getLineGuideStops = (skipShape) => {
@@ -418,24 +346,19 @@ const App = () => {
 
   return (
     <>
-      <Stage
-        width={width}
-        height={height}
-        ref={stageRef}
-        onMouseDown={checkDeselect}
-        onTouchStart={checkDeselect}
-      >
-        <Layer ref={imagesLayerRef}>
-          {images.map((image, i) => {
+      <Stage ref={stageRef}>
+        <Layer>
+          <Image />
+          {/* {images.map((image, i) => {
             return (
               <ImageRectangle
                 key={i}
                 src={image.url}
                 shapeProps={image}
-                isSelected={image.id === selectedId}
-                onSelect={() => {
-                  selectShape(image.id);
-                }}
+                undoRedoState={undoRedoState}
+                // onSelect={() => {
+                //   selectShape(image.id);
+                // }}
                 onChange={(newAttrs) => {
                   const rects = images.slice();
                   rects[i] = newAttrs;
@@ -445,7 +368,7 @@ const App = () => {
                 onDragEnd={handleDragEnd}
               />
             );
-          })}
+          })} */}
         </Layer>
         <Layer>
           {guidelines.map((guide, index) => {
@@ -539,27 +462,6 @@ const App = () => {
               alt="redo-icon"
             />
           </button>
-          {/* <button
-            onClick={() => {
-              if (!selectedId) return;
-              const index = images.findIndex((img) => img.id === selectedId);
-              if (index === -1) return;
-
-              const newImages = [...images];
-              const [selected] = newImages.splice(index, 1);
-              newImages.push(selected);
-              setImages(newImages);
-              applyHistory(newImages);
-            }}
-            title="이미지 앞으로 보내기"
-          >
-            <NextImage
-              src={"./images/layer-forward.png"}
-              width={25}
-              height={25}
-              alt="bring-forward-icon"
-            />
-          </button> */}
         </ToolBarContainer>
       </div>
     </>
@@ -567,45 +469,3 @@ const App = () => {
 };
 
 export default App;
-
-const ToolBarContainer = styled.div`
-  position: absolute;
-
-  display: flex;
-  column-gap: 24px;
-
-  left: 50%;
-  bottom: 0;
-  transform: translate(-50%, -50%);
-
-  padding: 14px 31px;
-  border-radius: 80px;
-  background-color: rgba(0, 0, 0, 0.5);
-
-  img {
-    width: 25px;
-    height: 25px;
-  }
-`;
-
-const InputFile = styled.input`
-  position: absolute;
-  width: 0;
-  height: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-`;
-
-const InputFileLabel = styled.label`
-  cursor: pointer;
-`;
-
-const ColorPickerContainer = styled.div`
-  position: absolute;
-  z-index: 999;
-
-  bottom: 0;
-  left: 50%;
-  transform: translate(-50%, -30%);
-`;

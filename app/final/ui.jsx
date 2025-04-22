@@ -3,7 +3,8 @@
 // 3. transform 테두리
 // 4. undo, redo 기능
 // 5. 가이드라인 기능
-// 6. 크롭 기능
+// 6. 이미지 앞으로 보내는 기능
+// 7. 핀치 제스처 추가
 
 import { useState, useRef, useEffect } from "react";
 import { Stage, Layer, Image, Transformer, Line, Rect } from "react-konva";
@@ -14,109 +15,111 @@ import useImage from "use-image";
 import NextImage from "next/image";
 import styled from "styled-components";
 
+import { useGesture } from "@use-gesture/react";
+import { animated, useSpring } from "@react-spring/konva";
+
 const width = window.innerWidth;
 const height = window.innerHeight;
 
 const deepClone = (arr) => arr.map((item) => ({ ...item }));
 
-const buttonStyle = {
-  padding: "8px 16px",
-  fontSize: "14px",
-  backgroundColor: "#f0f0f0",
-  border: "1px solid #ccc",
-  borderRadius: "4px",
-  marginRight: "8px",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-};
-
 const GUIDELINE_OFFSET = 5;
 
 const ImageRectangle = ({
   src,
-  shapeProps,
-  isSelected,
   onSelect,
+  shapeProps,
   onChange,
   onDragMove,
   onDragEnd,
+  undoRedoState,
 }) => {
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
-  const trRef = useRef();
+
+  const [style, api] = useSpring(() => ({
+    width: shapeProps.width,
+    height: shapeProps.height,
+    x: shapeProps.width / 2,
+    y: shapeProps.height / 2,
+    offsetX: shapeProps.width / 2,
+    offsetY: shapeProps.height / 2,
+  }));
+
+  useGesture(
+    {
+      onDrag: ({ pinching, cancel, offset: [x, y] }) => {
+        if (pinching) return cancel();
+        api.start({
+          x,
+          y,
+          immediate: true,
+        });
+        onDragMove("", shapeRef.current);
+      },
+      onPinch: ({ offset: [s, a] }) => {
+        api.start({
+          scale: { x: s, y: s },
+          rotation: a,
+        });
+      },
+      onPinchEnd: ({ offset: [s, a] }) => {
+        onChange({
+          ...shapeProps,
+          scale: { x: s, y: s },
+          rotation: a,
+        });
+      },
+      onDragEnd: ({ offset: [x, y] }) => {
+        onChange({
+          ...shapeProps,
+          x: style.x.get(),
+          y: style.y.get(),
+        });
+        if (onDragEnd) {
+          onDragEnd();
+        }
+      },
+    },
+    {
+      drag: {
+        pointer: { capture: false, touch: true },
+        from: () => [style.x.get(), style.y.get()],
+      },
+      pinch: {
+        pointer: { touch: true, capture: false },
+      },
+      target: shapeRef,
+    }
+  );
 
   useEffect(() => {
-    if (isSelected) {
-      // we need to attach transformer manually
-      trRef.current.nodes([shapeRef.current]);
+    if (undoRedoState && shapeProps) {
+      api.start({
+        width: shapeProps.width,
+        height: shapeProps.height,
+        x: shapeProps.x,
+        y: shapeProps.y,
+        offsetX: shapeProps.offsetX,
+        offsetY: shapeProps.offsetY,
+        scale: shapeProps.scale,
+        rotation: shapeProps.rotation,
+        immediate: true,
+      });
     }
-  }, [isSelected]);
+  }, [undoRedoState]);
 
   return (
     <>
-      <Image
+      <animated.Image
         name="object" // 가이드라인 기능에서 사용하기 위한 객체명 설정
         image={image}
+        ref={shapeRef}
         onClick={onSelect}
         onTap={onSelect}
-        ref={shapeRef}
-        {...shapeProps}
-        draggable={isSelected}
-        onDragMove={(e) => {
-          if (onDragMove) {
-            onDragMove(e, shapeRef.current);
-          }
-        }}
-        onDragEnd={(e) => {
-          onChange({
-            ...shapeProps,
-            x: e.target.x(),
-            y: e.target.y(),
-          });
-          if (onDragEnd) {
-            onDragEnd(e);
-          }
-        }}
-        onTransformEnd={(e) => {
-          // transformer is changing scale of the node
-          // and NOT its width or height
-          // but in the store we have only width and height
-          // to match the data better we will reset scale on transform end
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-
-          // we will reset it back
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...shapeProps,
-            x: node.x(),
-            y: node.y(),
-            // set minimal value
-            width: Math.max(5, node.width() * scaleX),
-            height: Math.max(node.height() * scaleY),
-            rotation: node.rotation(),
-          });
-          if (onDragEnd) onDragEnd(e);
-        }}
+        {...style}
       />
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          flipEnabled={false}
-          boundBoxFunc={(oldBox, newBox) => {
-            // limit resize
-            if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
-              return oldBox;
-            }
-            return newBox;
-          }}
-        />
-      )}
     </>
   );
 };
@@ -133,6 +136,8 @@ const App = () => {
 
   const [history, setHistory] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
+
+  const [undoRedoState, setUndoRedoState] = useState(0);
 
   // 가이드라인 상태 추가
   const [guidelines, setGuidelines] = useState([]);
@@ -174,22 +179,31 @@ const App = () => {
     img.onload = () => {
       const { width, height } = img;
 
+      // get the aperture we need to fit by taking padding off the stage size.
+      var targetW = stageRef.current.getWidth() - 2;
+      var targetH = stageRef.current.getHeight() - 2;
+
+      // compute the ratios of image dimensions to aperture dimensions
+      var widthFit = targetW / width;
+      var heightFit = targetH / height;
+
+      // compute a scale for best fit and apply it
+      var scale = widthFit > heightFit ? heightFit : widthFit;
+
+      var fitW = parseInt(width * scale, 10);
+      var fitH = parseInt(height * scale, 10);
+
       const newImage = {
         url: url,
         id: Math.floor(Math.random() * 9999) + 1,
-        x: width / 2 / 2,
-        y: height / 2 / 2,
-        width,
-        height,
+        x: stageRef.current.width() / 4,
+        y: stageRef.current.height() / 4,
+        width: fitW,
+        height: fitH,
+        offsetX: stageRef.current.width() / 2,
+        offsetY: stageRef.current.height() / 2,
+        scale: { x: 1, y: 1 },
         rotation: 0,
-        origWidth: img.naturalWidth,
-        origHeight: img.naturalHeight,
-        crop: {
-          x: 0,
-          y: 0,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        },
       };
 
       const updatedImages = [...images, newImage];
@@ -221,6 +235,7 @@ const App = () => {
     setHistory((prevList) => prevList.slice(0, -1)); // 마지막 하나 제거
     setRedoStack((prevList) => [...prevList, current]); // 현재 상태를 redo에 추가
     selectShape(null);
+    setUndoRedoState((state) => state + 1);
     setCropMode(false); // 크롭 모드 종료
   };
 
@@ -236,6 +251,7 @@ const App = () => {
     // history에 추가하고, redoStack에서 제거
     setHistory((prevList) => [...prevList, next]);
     setRedoStack((prevList) => prevList.slice(0, -1));
+    setUndoRedoState((state) => state + 1);
     setCropMode(false); // 크롭 모드 종료
   };
 
@@ -519,7 +535,7 @@ const App = () => {
                 key={i}
                 src={image.url}
                 shapeProps={image}
-                isSelected={image.id === selectedId}
+                undoRedoState={undoRedoState}
                 onSelect={() => {
                   selectShape(image.id);
                 }}
@@ -594,7 +610,7 @@ const App = () => {
               }}
               ref={cropRectRef}
             />
-            <Transformer ref={cropTransformerRef} />
+            <Transformer ref={cropTransformerRef} />{" "}
           </Layer>
         )}
       </Stage>
@@ -678,6 +694,27 @@ const App = () => {
               </button>
             </>
           )}
+          {/* <button
+            onClick={() => {
+              if (!selectedId) return;
+              const index = images.findIndex((img) => img.id === selectedId);
+              if (index === -1) return;
+
+              const newImages = [...images];
+              const [selected] = newImages.splice(index, 1);
+              newImages.push(selected);
+              setImages(newImages);
+              applyHistory(newImages);
+            }}
+            title="이미지 앞으로 보내기"
+          >
+            <NextImage
+              src={"./images/layer-forward.png"}
+              width={25}
+              height={25}
+              alt="bring-forward-icon"
+            />
+          </button> */}
         </ToolBarContainer>
       </div>
     </>
@@ -699,6 +736,10 @@ const ToolBarContainer = styled.div`
   padding: 14px 31px;
   border-radius: 80px;
   background-color: rgba(0, 0, 0, 0.5);
+
+  img {
+    width: 25px;
+  }
 `;
 
 const InputFile = styled.input`
