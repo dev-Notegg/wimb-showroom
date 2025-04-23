@@ -619,6 +619,14 @@ const App = () => {
     }
   }, [cropMode, cropRect]);
 
+  //이미지 삭제
+  const deleteSelected = () => {
+    if (!selectedId) return;
+    const newImages = images.filter((img) => img.id !== selectedId);
+    applyHistory(newImages);
+    selectShape(null);
+  };
+
   return (
     <>
       <Stage
@@ -792,6 +800,14 @@ const App = () => {
               width={25}
               height={25}
               alt="redo-icon"
+            />
+          </button>
+          <button onClick={deleteSelected} title="삭제">
+            <NextImage
+              src={"./images/trash.png"}
+              width={25}
+              height={25}
+              alt="delete-icon"
             />
           </button>
 
