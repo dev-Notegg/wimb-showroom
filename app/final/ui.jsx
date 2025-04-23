@@ -26,6 +26,7 @@ const deepClone = (arr) => arr.map((item) => ({ ...item }));
 const GUIDELINE_OFFSET = 5;
 
 const ImageRectangle = ({
+  shapeRefs,
   src,
   onSelect,
   shapeProps,
@@ -38,6 +39,19 @@ const ImageRectangle = ({
   const [image] = useImage(src, "anonymous");
 
   const shapeRef = useRef();
+
+  useEffect(() => {
+    if (shapeRef.current) {
+      shapeRefs.current.set(shapeProps.id, shapeRef.current);
+    }
+  }, [shapeRef.current]);
+
+  useEffect(() => {
+    if (shapeRef.current && image) {
+      shapeRef.current.cache();
+      shapeRef.current.getLayer().batchDraw();
+    }
+  }, [image]);
 
   const [style, api] = useSpring(() => ({
     width: shapeProps.width,
@@ -108,8 +122,19 @@ const ImageRectangle = ({
         rotation: shapeProps.rotation,
         immediate: true,
       });
+      if (shapeRef.current) {
+        shapeRef.current.cache();
+        shapeRef.current.getLayer()?.batchDraw();
+      }
     }
   }, [undoRedoState]);
+
+  useEffect(() => {
+    if (shapeRef.current && image) {
+      shapeRef.current.cache();
+      shapeRef.current.getLayer()?.batchDraw();
+    }
+  }, [shapeProps.crop]);
 
   return (
     <>
@@ -120,6 +145,9 @@ const ImageRectangle = ({
         onClick={onSelect}
         onTap={onSelect}
         {...style}
+        width={shapeProps.width}
+        height={shapeProps.height}
+        crop={shapeProps.crop}
       />
     </>
   );
@@ -127,6 +155,7 @@ const ImageRectangle = ({
 
 const App = () => {
   const stageRef = useRef(null);
+  const shapeRefs = useRef(new Map());
   const imagesLayerRef = useRef(null); // 레이어 ref
 
   const [images, setImages] = useState([]);
@@ -207,6 +236,10 @@ const App = () => {
         rotation: 0,
         origWidth: img.naturalWidth,
         origHeight: img.naturalHeight,
+        resizeRatio: {
+          x: fitW / img.naturalWidth,
+          y: fitH / img.naturalHeight,
+        },
         crop: {
           x: 0,
           y: 0,
@@ -498,15 +531,17 @@ const App = () => {
   // cropping 기능 추가
   const startCropMode = () => {
     if (!selectedId) return;
-    const index = images.findIndex((img) => img.id === selectedId);
-    if (index === -1) return;
-    const img = images[index];
+    const node = shapeRefs.current.get(selectedId);
+    if (!node) return;
+
+    const box = node.getClientRect({ skipStroke: true });
+
     setCropRect({
-      x: img.x,
-      y: img.y,
-      width: img.width,
-      height: img.height,
-      rotation: img.rotation, // 회전값 포함
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2,
+      width: box.width,
+      height: box.height,
+      rotation: node.rotation(), // 회전값 포함
     });
     setCropMode(true);
   };
@@ -516,38 +551,50 @@ const App = () => {
     const index = images.findIndex((img) => img.id === selectedId);
     if (index === -1) return;
     const img = images[index];
+    const node = shapeRefs.current.get(selectedId);
+    if (!node) return;
 
-    // 회전 보정
-    const rad = (img.rotation * Math.PI) / 180;
-    const dx = cropRect.x - img.x;
-    const dy = cropRect.y - img.y;
-    const cos = Math.cos(-rad);
-    const sin = Math.sin(-rad);
-    const local_x = dx * cos - dy * sin;
-    const local_y = dx * sin + dy * cos;
+    const absPos = node.absolutePosition();
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const rotation = node.rotation() * (Math.PI / 180);
 
-    // 이전 crop 정보가 있으면 그것을 기준으로, 없으면 원본 전체
-    const oldCrop = img.crop
-      ? img.crop
-      : { x: 0, y: 0, width: img.origWidth, height: img.origHeight };
-    // 화면에 표시된 이미지 크기와 기존 crop 영역 사이의 비율 계산
-    const scaleXFactor = oldCrop.width / img.width;
-    const scaleYFactor = oldCrop.height / img.height;
+    // crop 박스의 왼쪽 상단 좌표
+    const cropBoxX = cropRect.x - cropRect.width / 2;
+    const cropBoxY = cropRect.y - cropRect.height / 2;
+
+    // crop 박스 기준점에서 이미지 위치까지 벡터
+    const dx = cropBoxX - absPos.x;
+    const dy = cropBoxY - absPos.y;
+
+    // 회전 보정 (이미지 로컬 좌표로 변환)
+    const localX = dx * Math.cos(-rotation) - dy * Math.sin(-rotation);
+    const localY = dx * Math.sin(-rotation) + dy * Math.cos(-rotation);
+
+    // 이미지 축소되었으면 비율 보정
+    const resizeRatioX = img.width / (img.crop?.width || img.origWidth);
+    const resizeRatioY = img.height / (img.crop?.height || img.origHeight);
+
+    const cropX = (img.crop?.x || 0) + localX / scaleX / resizeRatioX;
+    const cropY = (img.crop?.y || 0) + localY / scaleY / resizeRatioY;
+    const cropWidth = cropRect.width / scaleX / resizeRatioX;
+    const cropHeight = cropRect.height / scaleY / resizeRatioY;
 
     const newCrop = {
-      x: oldCrop.x + local_x * scaleXFactor,
-      y: oldCrop.y + local_y * scaleYFactor,
-      width: cropRect.width * scaleXFactor,
-      height: cropRect.height * scaleYFactor,
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
     };
 
     // 업데이트시에는 crop 프로퍼티를 갱신하여 재크롭도 원본에 맞게 누적됨
     const updatedImage = {
       ...img,
-      x: cropRect.x,
-      y: cropRect.y,
+      x: cropRect.x - (cropRect.width / 2),
+      y: cropRect.y - (cropRect.height / 2),
       width: cropRect.width,
       height: cropRect.height,
+      scale: { x: 1, y: 1 },
       crop: newCrop,
     };
     const newImages = [...images];
@@ -580,11 +627,13 @@ const App = () => {
         ref={stageRef}
         onMouseDown={checkDeselect}
         onTouchStart={checkDeselect}
+        style={{ touchAction: "none" }}
       >
         <Layer ref={imagesLayerRef}>
           {images.map((image, i) => {
             return (
               <ImageRectangle
+                shapeRefs={shapeRefs}
                 key={i}
                 src={image.url}
                 shapeProps={image}
@@ -639,6 +688,8 @@ const App = () => {
               width={cropRect.width}
               height={cropRect.height}
               rotation={cropRect.rotation} // 회전값 추가
+              offsetX={cropRect.width  / 2}
+              offsetY={cropRect.height / 2}
               stroke="red"
               dash={[4, 4]}
               draggable
