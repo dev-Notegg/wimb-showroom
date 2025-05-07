@@ -491,25 +491,47 @@ const App = () => {
     setGuidelines([]);
   };
 
+  const getSelectedNode = () => {
+    const node = shapeRefs.current.get(selectedId);
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const imgX = node.getAttr("x");
+    const imgY = node.getAttr("y");
+    const width = node.getAttr("width");
+    const height = node.getAttr("height");
+    const rotation = node.rotation();
+
+    const imageWidth = width * scaleX;
+    const imageHeight = height * scaleY;
+
+    return {
+      node,
+      scaleX,
+      scaleY,
+      imgX,
+      imgY,
+      width,
+      height,
+      rotation,
+      imageWidth,
+      imageHeight,
+    };
+  };
+
   // cropping 기능 추가
   const startCropMode = () => {
     if (!selectedId) return;
-    const node = shapeRefs.current.get(selectedId);
+
+    const { node, imgX, imgY, rotation, imageWidth, imageHeight } =
+      getSelectedNode();
+
     if (!node) return;
 
-    const box = node.getClientRect({ skipStroke: true });
-
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-
-    const boxWidth = node.getAttr("width") * scaleX;
-    const boxHeight = node.getAttr("height") * scaleY;
-
     setCropRect({
-      x: box.x + box.width / 2,
-      y: box.y + box.height / 2,
-      width: boxWidth,
-      height: boxHeight,
+      x: imgX,
+      y: imgY,
+      width: imageWidth,
+      height: imageHeight,
       rotation: node.rotation(), // 회전값 포함
     });
     setCropMode(true);
@@ -520,20 +542,22 @@ const App = () => {
     const index = images.findIndex((img) => img.id === selectedId);
     if (index === -1) return;
     const img = images[index];
-    const node = shapeRefs.current.get(selectedId);
+
+    const {
+      node,
+      scaleX,
+      scaleY,
+      imgX,
+      imgY,
+      rotation,
+      imageWidth,
+      imageHeight,
+    } = getSelectedNode();
+
     if (!node) return;
 
     // 현재 이미지 스케일 및 크기
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-    const imgX = node.getAttr("x");
-    const imgY = node.getAttr("y");
-    const width = node.getAttr("width");
-    const height = node.getAttr("height");
-    const rotation = (node.rotation() * Math.PI) / 180;
-
-    const imageWidth = width * scaleX;
-    const imageHeight = height * scaleY;
+    const rad = (rotation * Math.PI) / 180;
 
     // 중심 좌표를 좌상단 좌표로 보정
     const cropTopLeft = {
@@ -549,8 +573,8 @@ const App = () => {
     const dy = cropBoxY - imgY;
 
     // 회전 보정 (이미지 로컬 좌표로 변환)
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
+    const cos = Math.cos(-rad);
+    const sin = Math.sin(-rad);
     const localX = dx * cos - dy * sin;
     const localY = dx * sin + dy * cos;
 
