@@ -335,15 +335,6 @@ const App = () => {
     }
   }, [color]);
 
-  useEffect(() => {
-    if (cropTransformerRef.current) {
-      // 회전 기능을 비활성화합니다.
-      cropTransformerRef.current.rotateEnabled(false);
-      // 회전 연결 선도 숨깁니다.
-      cropTransformerRef.current.rotateLineVisible(false);
-    }
-  }, [cropMode]);
-
   // 가이드라인 관련 헬퍼 함수들
   const getLineGuideStops = (skipShape) => {
     const stage = stageRef.current;
@@ -532,9 +523,16 @@ const App = () => {
       y: imgY,
       width: imageWidth,
       height: imageHeight,
-      rotation: node.rotation(), // 회전값 포함
+      rotation: rotation, // 회전값 포함
     });
     setCropMode(true);
+
+    requestAnimationFrame(() => {
+      if (cropRectRef.current && cropTransformerRef.current) {
+        cropTransformerRef.current.nodes([cropRectRef.current]);
+        cropTransformerRef.current.getLayer().batchDraw();
+      }
+    });
   };
 
   const handleConfirmCrop = () => {
@@ -622,13 +620,6 @@ const App = () => {
     setCropMode(false);
     setCropRect(null);
   };
-
-  useEffect(() => {
-    if (cropMode && cropRectRef.current && cropTransformerRef.current) {
-      cropTransformerRef.current.nodes([cropRectRef.current]);
-      cropTransformerRef.current.getLayer().batchDraw();
-    }
-  }, [cropMode, cropRect]);
 
   //이미지 삭제
   const deleteSelected = () => {
@@ -735,7 +726,11 @@ const App = () => {
               }}
               ref={cropRectRef}
             />
-            <Transformer ref={cropTransformerRef} />
+            <Transformer
+              ref={cropTransformerRef}
+              rotateEnabled={false}
+              rotateLineVisible={false}
+            />
           </Layer>
         )}
       </Stage>
